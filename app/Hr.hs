@@ -4,12 +4,13 @@ module Main where
 
 import Turtle
 import Data.Text (pack, unpack)
+import Data.List (intercalate)
 
 hr :: Int -> UTCTime -> String
-hr n crntTime = top ++ middle ++ bottom
+hr n crntTime = intercalate "\n" [top, middle, bottom]
   where top = replicate n '▀'
         bottom = replicate n '▄'
-        middle = crntTimeStr ++ trailingSpaces ++ "\n"
+        middle = crntTimeStr ++ trailingSpaces
           where crntTimeStr = show crntTime
                 trailingSpaces = replicate (max 0 $ n - length crntTimeStr) ' '
 
