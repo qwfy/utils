@@ -1,21 +1,28 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ExtendedDefaultRules #-}
+{-# OPTIONS_GHC -fno-warn-type-defaults #-}
 
 module Main where
 
-import Turtle
-import Data.Text (pack, unpack)
-import Data.List (intercalate)
+import Shelly
+import qualified Data.Text as T
+import qualified Data.Text.IO
+import qualified Data.Time.LocalTime as Lt
+import qualified Data.Time.Clock as Clock
+import qualified System.IO
 
-hr :: Int -> UTCTime -> String
-hr n crntTime = intercalate "\n" [top, middle, bottom]
-  where top = replicate n '▀'
-        bottom = replicate n '▄'
-        middle = crntTimeStr ++ trailingSpaces
-          where crntTimeStr = show crntTime
-                trailingSpaces = replicate (max 0 $ n - length crntTimeStr) ' '
+main = do
+    System.IO.hSetBuffering System.IO.stdout System.IO.LineBuffering
+    shelly $ do
+      crntTime <- liftIO $ fmap Lt.zonedTimeToUTC Lt.getZonedTime
+      widthStr <- silently $ run "tput" ["cols"]
+      let width = read . T.unpack $ widthStr :: Int
+      let lines = hr width crntTime
+      liftIO $ Data.Text.IO.putStrLn (T.intercalate "\n" lines)
 
-main = sh $ do
-  crntTime <- date
-  widthStr <- inshell "tput cols" empty
-  let width = read . unpack $ widthStr :: Int
-  stdout $ return . pack $ hr width crntTime
+hr :: Int -> Clock.UTCTime -> [T.Text]
+hr n crntTime =
+    [blocks, time, blocks]
+    where
+      blocks = T.replicate n $ T.pack ['▀']
+      time = T.pack $ show crntTime
