@@ -116,8 +116,9 @@ optionParser' = Option
        <> Opt.help "Use this editor instead of $EDITOR"))
     <*> fmap words (Opt.strOption
         ( Opt.long "editor-options"
-       <> Opt.metavar "'EDITOR_OPTIONS'"
+       <> Opt.metavar "EDITOR_OPTIONS"
        <> Opt.value ""
+       <> Opt.showDefault
        <> Opt.help ( unwords [ "Additional options to pass to editor."
                              , "NOTE: the passed string will simply be split on spaces,"
                              , "no extra handling are added"])))

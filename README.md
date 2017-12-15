@@ -44,3 +44,5 @@ then you can edit lines below the marker:
 
 after editing, save and quit your editor, `file name 1` will be renamed to
 `new file name 1`, etc..
+
+See `rename --help` for more options.
