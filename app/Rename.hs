@@ -5,6 +5,8 @@ import qualified System.Process
 import qualified System.IO
 import qualified System.IO.Temp
 import qualified System.Exit
+import qualified Data.List as List
+import qualified Algorithms.NaturalSort as NaturalSort
 
 import qualified Options.Applicative as Opt
 
@@ -31,7 +33,9 @@ renameFromDir option = do
             System.Exit.die "No files found."
           else do
             pairsR <- System.IO.Temp.withSystemTempFile "rename-.txt"
-                      (waitPairs editor (fromDirOptionEditorOptions option) fileNames)
+                      (waitPairs
+                         editor (fromDirOptionEditorOptions option)
+                         fileNames (fromDirOptionSort option))
             case pairsR of
               Left reason ->
                   System.Exit.die reason
@@ -40,9 +44,13 @@ renameFromDir option = do
                   then System.Exit.die "Nothing to rename."
                   else rename (fromDirOptionDir option) pairs
 
-waitPairs :: String -> [String] -> [String] -> FilePath -> System.IO.Handle -> IO (Either String [(String, String)])
-waitPairs editor editorOptions filenames tempFile tempHandle = do
-    let filenameStr = unlines filenames
+waitPairs :: String -> [String]
+          -> [String] -> Bool
+          -> FilePath -> System.IO.Handle -> IO (Either String [(String, String)])
+waitPairs editor editorOptions
+          filenames isSort
+          tempFile tempHandle = do
+    let filenameStr = unlines (sort isSort filenames)
     System.IO.hPutStr tempHandle filenameStr
     System.IO.hPutStr tempHandle $ unlines ["", delimiter, ""]
     System.IO.hPutStr tempHandle filenameStr
@@ -55,6 +63,11 @@ waitPairs editor editorOptions filenames tempFile tempHandle = do
       return $ Left $ "Editor terminated with a non-zero exit code: " ++ show exitCode
     else
       fileToPairs tempHandle
+
+sort :: Bool -> [String] -> [String]
+sort False xs = xs
+sort True xs =
+    List.sortBy NaturalSort.compare xs
 
 -- TODO incomplete: strip white spaces
 fileToPairs :: System.IO.Handle -> IO (Either String [(String, String)])
@@ -129,6 +142,7 @@ data FromDirOption = FromDirOption
     { fromDirOptionDir :: String
     , fromDirOptionEditor :: Maybe String
     , fromDirOptionEditorOptions :: [String]
+    , fromDirOptionSort :: Bool
     }
 
 fromDirOptionParser :: Opt.Parser FromDirOption
@@ -150,3 +164,6 @@ fromDirOptionParser = FromDirOption
        <> Opt.help ( unwords [ "Additional options to pass to editor."
                              , "NOTE: the passed string will simply be split on spaces,"
                              , "no extra handling are added"])))
+    <*> fmap not (Opt.switch
+        ( Opt.long "no-sort"
+       <> Opt.help "Don't sort listed files"))
