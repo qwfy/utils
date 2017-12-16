@@ -19,7 +19,7 @@ Both the name and idea are stolen from https://github.com/LuRsT/hr
 
 ### rename: Rename files using your favorite editor
 
-    $ rename
+    $ rename dir
 
 will fire up your `$EDITOR` and put file names in the current directory in it,
 like this:
@@ -45,4 +45,4 @@ then you can edit lines below the marker:
 after editing, save and quit your editor, `file name 1` will be renamed to
 `new file name 1`, etc..
 
-See `rename --help` for more options.
+See `rename --help` or `rename dir --help` for more options.

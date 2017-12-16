@@ -9,10 +9,17 @@ import qualified System.Exit
 import qualified Options.Applicative as Opt
 
 import Data.Semigroup ((<>))
+import Control.Applicative ((<**>))
 import Control.Monad (forM_, foldM)
 
 main = do
     option <- Opt.execParser optionParser
+    case optionCommand option of
+      FromDir fromDirOption ->
+          renameFromDir fromDirOption
+
+renameFromDir :: FromDirOption -> IO ()
+renameFromDir option = do
     editorO <- getEditor option
     case editorO of
       Nothing ->
@@ -24,14 +31,14 @@ main = do
             System.Exit.die "No files found."
           else do
             pairsR <- System.IO.Temp.withSystemTempFile "rename-.txt"
-                      (waitPairs editor (optionEditorOptions option) fileNames)
+                      (waitPairs editor (fromDirOptionEditorOptions option) fileNames)
             case pairsR of
               Left reason ->
                   System.Exit.die reason
               Right pairs ->
                   if null pairs
                   then System.Exit.die "Nothing to rename."
-                  else rename (optionDir option) pairs
+                  else rename (fromDirOptionDir option) pairs
 
 waitPairs :: String -> [String] -> [String] -> FilePath -> System.IO.Handle -> IO (Either String [(String, String)])
 waitPairs editor editorOptions filenames tempFile tempHandle = do
@@ -83,30 +90,51 @@ rename relativeTo pairs = do
     let pairs' = map addDir pairs
     forM_ pairs' (uncurry System.Directory.renamePath)
 
-getEditor :: Option -> IO (Maybe String)
+getEditor :: FromDirOption -> IO (Maybe String)
 getEditor option =
-    case optionEditor option of
+    case fromDirOptionEditor option of
       Just editor ->
           return $ Just editor
       Nothing ->
           System.Environment.lookupEnv "EDITOR"
 
-getFilenames :: Option -> IO [FilePath]
+getFilenames :: FromDirOption -> IO [FilePath]
 getFilenames option = do
-    let dir = optionDir option
+    let dir = fromDirOptionDir option
     System.Directory.listDirectory dir
 
+delimiter = "------ Above is the original file names, put new file names below ------"
+
+optionParser :: Opt.ParserInfo Option
+optionParser =
+    Opt.info
+      (optionParser' <**> Opt.helper)
+      (Opt.progDesc "Rename files using text editor")
+    where
+      optionParser' = Option <$> Opt.hsubparser
+          ( Opt.command "dir"
+              (Opt.info
+                (FromDir <$> fromDirOptionParser)
+                (Opt.progDesc "Rename files in a directory"))
+          )
+
 data Option = Option
-    { optionDir :: String
-    , optionEditor :: Maybe String
-    , optionEditorOptions :: [String]
+    { optionCommand :: Command
     }
 
-optionParser' :: Opt.Parser Option
-optionParser' = Option
-    <$> Opt.strOption
-        ( Opt.long "dir"
-       <> Opt.metavar "DIRECTORY"
+data Command
+    = FromDir FromDirOption
+
+data FromDirOption = FromDirOption
+    { fromDirOptionDir :: String
+    , fromDirOptionEditor :: Maybe String
+    , fromDirOptionEditorOptions :: [String]
+    }
+
+fromDirOptionParser :: Opt.Parser FromDirOption
+fromDirOptionParser = FromDirOption
+    <$> Opt.strArgument
+        ( Opt.metavar "DIRECTORY"
        <> Opt.value "./"
        <> Opt.showDefault
        <> Opt.help "Rename files in this directory")
@@ -122,9 +150,3 @@ optionParser' = Option
        <> Opt.help ( unwords [ "Additional options to pass to editor."
                              , "NOTE: the passed string will simply be split on spaces,"
                              , "no extra handling are added"])))
-
-optionParser =
-    Opt.info (Opt.helper <*> optionParser')
-       (Opt.progDesc "Rename files using your text editor")
-
-delimiter = "------ Above is the original file names, put new file names below ------"
