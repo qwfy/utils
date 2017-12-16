@@ -1,5 +1,17 @@
 ## Utils: Some tiny utilities to make life a little easier
 
+
+### How to Install
+
+First, make sure you have [stack](https://docs.haskellstack.org/en/stable/install_and_upgrade/)
+installed, then run these commands in your shell:
+
+    git clone https://github.com/qwfy/utils.git
+    cd utils
+    stack install
+    echo "binaries installed to $(stack path --local-bin)"
+
+
 ### hr: Print a horizontal rule in the terminal
 
     $ hr
