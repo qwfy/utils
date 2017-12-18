@@ -1,6 +1,12 @@
 ## Utils: Some tiny utilities to make life a little easier
 
 
+### List of utilities
+
+- rename: Rename files using your favorite text editor
+- hr: Print a horizontal rule in the terminal
+
+
 ### How to Install
 
 First, make sure you have [stack](https://docs.haskellstack.org/en/stable/install_and_upgrade/)
@@ -12,24 +18,7 @@ installed, then run these commands in your shell:
     echo "binaries installed to $(stack path --local-bin)"
 
 
-### hr: Print a horizontal rule in the terminal
-
-    $ hr
-    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-    2016-05-08 10:30:56.091685 UTC
-    ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
-
-Or, if it's really necessary:
-
-    $ hr some memo
-    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-    2016-05-08 10:30:56.091685 UTC
-    ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
-
-Both the name and idea are stolen from https://github.com/LuRsT/hr
-
-
-### rename: Rename files using your favorite editor
+### rename: Rename files using your favorite text editor
 
     $ rename
 
@@ -66,3 +55,20 @@ Another example:
     $ ls foo/*.txt | rename --stdin foo
 
 See `rename --help` for more options.
+
+
+### hr: Print a horizontal rule in the terminal
+
+    $ hr
+    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+    2016-05-08 10:30:56.091685 UTC
+    ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+
+Or, if it's really necessary:
+
+    $ hr some memo
+    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+    2016-05-08 10:30:56.091685 UTC
+    ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+
+Both the name and idea are stolen from https://github.com/LuRsT/hr
