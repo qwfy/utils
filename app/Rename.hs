@@ -197,7 +197,7 @@ renameOptionParser =
        <> Opt.showDefault
        <> Opt.help ( unwords [ "Additional options to pass to editor."
                              , "NOTE: the passed string will simply be split on spaces,"
-                             , "no extra handling are added"])))
+                             , "special characters are NOT taken care of"])))
     <*> fmap not (Opt.switch
         ( Opt.long "no-sort"
-       <> Opt.help "Don't sort files"))
+       <> Opt.help "Don't sort files when putting them to editor"))
