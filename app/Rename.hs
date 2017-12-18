@@ -53,13 +53,16 @@ waitPairs :: String -> [String]
 waitPairs editor editorOptions
           filenames isSort
           tempFile tempHandle = do
-    let filenameStr = unlines (sort isSort filenames)
+    let filenameStr = unlines $ sort isSort filenames
     System.IO.hPutStr tempHandle filenameStr
     System.IO.hPutStr tempHandle $ unlines ["", delimiter, ""]
     System.IO.hPutStr tempHandle filenameStr
     System.IO.hFlush tempHandle
-    (_, _, _, processHandle) <- System.Process.createProcess
-                                (System.Process.proc editor $ editorOptions ++ [tempFile])
+
+    let createProcess = (System.Process.proc editor $ editorOptions ++ [tempFile])
+    let createProcess' = createProcess {System.Process.std_in = System.Process.CreatePipe}
+    (_, _, _, processHandle) <- System.Process.createProcess createProcess'
+
     exitCode <- System.Process.waitForProcess processHandle
     if exitCode /= System.Exit.ExitSuccess
     then
@@ -106,9 +109,11 @@ renamePairs source pairs =
   let pairs' =
         case source of
           Dir relativeTo ->
-            let addDir (old, new) = ( System.FilePath.combine relativeTo old
-                                    , System.FilePath.combine relativeTo new)
-            in map addDir pairs
+              let addDir (old, new) = ( System.FilePath.combine relativeTo old
+                                      , System.FilePath.combine relativeTo new)
+              in map addDir pairs
+          Stdin ->
+              pairs
   in forM_ pairs' (uncurry System.Directory.renamePath)
 
 
@@ -126,6 +131,8 @@ getEditor Nothing =
 getFilenames :: Source -> IO [FilePath]
 getFilenames (Dir dir) =
     System.Directory.listDirectory dir
+getFilenames Stdin =
+    lines <$> getContents
 
 
 optionParser :: Opt.ParserInfo Option
@@ -142,6 +149,7 @@ data Option
 
 data Source
     = Dir String
+    | Stdin
 
 data RenameOption = RenameOption
     { renameOptionSource :: Source
@@ -151,13 +159,27 @@ data RenameOption = RenameOption
     }
 
 renameOptionParser :: Opt.Parser RenameOption
-renameOptionParser = RenameOption
-    <$> (Dir <$> (Opt.strOption
-                   ( Opt.long "dir"
-                  <> Opt.metavar "DIR"
-                  <> Opt.value "./"
-                  <> Opt.showDefault
-                  <> Opt.help "Rename files in this directory")))
+renameOptionParser =
+    let defaultDir = "./"
+
+        dirParser = Dir <$>
+          Opt.strOption
+             ( Opt.long "dir"
+            <> Opt.metavar "DIR"
+            <> Opt.value defaultDir
+            <> Opt.showDefault
+            <> Opt.help "Rename files in this directory")
+
+        stdinParser =
+          Opt.flag' Stdin
+             ( Opt.long "stdin"
+            <> Opt.help "Rename files read from stdin")
+
+        sourceParser =
+          (dirParser <|> stdinParser <|> pure (Dir defaultDir))
+    in
+    RenameOption
+    <$> sourceParser
     <*> Opt.optional (Opt.strOption
         ( Opt.long "editor"
        <> Opt.metavar "EDITOR"
