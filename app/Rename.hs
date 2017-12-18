@@ -11,38 +11,41 @@ import qualified Algorithms.NaturalSort as NaturalSort
 import qualified Options.Applicative as Opt
 
 import Data.Semigroup ((<>))
-import Control.Applicative ((<**>))
+import Control.Applicative ((<**>), (<|>))
 import Control.Monad (forM_, foldM)
+
 
 main = do
     option <- Opt.execParser optionParser
-    case optionCommand option of
-      FromDir fromDirOption ->
-          renameFromDir fromDirOption
+    case option of
+      Rename renameOption ->
+          rename renameOption
 
-renameFromDir :: FromDirOption -> IO ()
-renameFromDir option = do
-    editorO <- getEditor option
+
+rename :: RenameOption -> IO ()
+rename option = do
+    editorO <- getEditor (renameOptionEditor option)
     case editorO of
       Nothing ->
           System.Exit.die "No editor found."
       Just editor -> do
-          fileNames <- getFilenames option
+          fileNames <- getFilenames (renameOptionSource option)
           if null fileNames
           then
             System.Exit.die "No files found."
           else do
             pairsR <- System.IO.Temp.withSystemTempFile "rename-.txt"
                       (waitPairs
-                         editor (fromDirOptionEditorOptions option)
-                         fileNames (fromDirOptionSort option))
+                         editor (renameOptionEditorOptions option)
+                         fileNames (renameOptionSort option))
             case pairsR of
               Left reason ->
                   System.Exit.die reason
               Right pairs ->
                   if null pairs
                   then System.Exit.die "Nothing to rename."
-                  else rename (fromDirOptionDir option) pairs
+                  else renamePairs (renameOptionSource option) pairs
+
 
 waitPairs :: String -> [String]
           -> [String] -> Bool
@@ -64,10 +67,11 @@ waitPairs editor editorOptions
     else
       fileToPairs tempHandle
 
-sort :: Bool -> [String] -> [String]
-sort False xs = xs
-sort True xs =
-    List.sortBy NaturalSort.compare xs
+    where
+      sort :: Bool -> [String] -> [String]
+      sort False xs = xs
+      sort True xs = List.sortBy NaturalSort.compare xs
+
 
 -- TODO incomplete: strip white spaces
 fileToPairs :: System.IO.Handle -> IO (Either String [(String, String)])
@@ -95,28 +99,34 @@ fileToPairs handle = do
           then return $ Right (zip olds news)
           else return $ Left "Number of old file names does not equal to number of new file names."
 
+
 -- TODO incomplete: better handling of non-existent and already existed files
-rename :: String -> [(String, String)] -> IO ()
-rename relativeTo pairs = do
-    let addDir (old, new) = ( System.FilePath.combine relativeTo old
-                            , System.FilePath.combine relativeTo new)
-    let pairs' = map addDir pairs
-    forM_ pairs' (uncurry System.Directory.renamePath)
+renamePairs :: Source -> [(String, String)] -> IO ()
+renamePairs source pairs =
+  let pairs' =
+        case source of
+          Dir relativeTo ->
+            let addDir (old, new) = ( System.FilePath.combine relativeTo old
+                                    , System.FilePath.combine relativeTo new)
+            in map addDir pairs
+  in forM_ pairs' (uncurry System.Directory.renamePath)
 
-getEditor :: FromDirOption -> IO (Maybe String)
-getEditor option =
-    case fromDirOptionEditor option of
-      Just editor ->
-          return $ Just editor
-      Nothing ->
-          System.Environment.lookupEnv "EDITOR"
 
-getFilenames :: FromDirOption -> IO [FilePath]
-getFilenames option = do
-    let dir = fromDirOptionDir option
+-- TODO incomplete: use a better delimiter?
+delimiter = "------ Above is the original file names, put new file names below ------"
+
+
+getEditor :: Maybe String -> IO (Maybe String)
+getEditor (Just editor) =
+    return $ Just editor
+getEditor Nothing =
+    System.Environment.lookupEnv "EDITOR"
+
+
+getFilenames :: Source -> IO [FilePath]
+getFilenames (Dir dir) =
     System.Directory.listDirectory dir
 
-delimiter = "------ Above is the original file names, put new file names below ------"
 
 optionParser :: Opt.ParserInfo Option
 optionParser =
@@ -124,34 +134,30 @@ optionParser =
       (optionParser' <**> Opt.helper)
       (Opt.progDesc "Rename files using text editor")
     where
-      optionParser' = Option <$> Opt.hsubparser
-          ( Opt.command "dir"
-              (Opt.info
-                (FromDir <$> fromDirOptionParser)
-                (Opt.progDesc "Rename files in a directory"))
-          )
+      optionParser' =
+        Rename <$> renameOptionParser
 
-data Option = Option
-    { optionCommand :: Command
+data Option
+    = Rename RenameOption
+
+data Source
+    = Dir String
+
+data RenameOption = RenameOption
+    { renameOptionSource :: Source
+    , renameOptionEditor :: Maybe String
+    , renameOptionEditorOptions :: [String]
+    , renameOptionSort :: Bool
     }
 
-data Command
-    = FromDir FromDirOption
-
-data FromDirOption = FromDirOption
-    { fromDirOptionDir :: String
-    , fromDirOptionEditor :: Maybe String
-    , fromDirOptionEditorOptions :: [String]
-    , fromDirOptionSort :: Bool
-    }
-
-fromDirOptionParser :: Opt.Parser FromDirOption
-fromDirOptionParser = FromDirOption
-    <$> Opt.strArgument
-        ( Opt.metavar "DIRECTORY"
-       <> Opt.value "./"
-       <> Opt.showDefault
-       <> Opt.help "Rename files in this directory")
+renameOptionParser :: Opt.Parser RenameOption
+renameOptionParser = RenameOption
+    <$> (Dir <$> (Opt.strOption
+                   ( Opt.long "dir"
+                  <> Opt.metavar "DIR"
+                  <> Opt.value "./"
+                  <> Opt.showDefault
+                  <> Opt.help "Rename files in this directory")))
     <*> Opt.optional (Opt.strOption
         ( Opt.long "editor"
        <> Opt.metavar "EDITOR"
