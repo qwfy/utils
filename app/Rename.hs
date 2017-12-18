@@ -106,15 +106,15 @@ fileToPairs handle = do
 -- TODO incomplete: better handling of non-existent and already existed files
 renamePairs :: Source -> [(String, String)] -> IO ()
 renamePairs source pairs =
-  let pairs' =
+  forM_ pairs' (uncurry System.Directory.renamePath)
+    where
+      pairs' = map addDir pairs
+      addDir (old, new) = ( System.FilePath.combine cd old
+                          , System.FilePath.combine cd new)
+      cd =
         case source of
-          Dir relativeTo ->
-              let addDir (old, new) = ( System.FilePath.combine relativeTo old
-                                      , System.FilePath.combine relativeTo new)
-              in map addDir pairs
-          Stdin ->
-              pairs
-  in forM_ pairs' (uncurry System.Directory.renamePath)
+          Dir d -> d
+          Stdin d -> d
 
 
 -- TODO incomplete: use a better delimiter?
@@ -131,7 +131,7 @@ getEditor Nothing =
 getFilenames :: Source -> IO [FilePath]
 getFilenames (Dir dir) =
     System.Directory.listDirectory dir
-getFilenames Stdin =
+getFilenames (Stdin _cd) =
     lines <$> getContents
 
 
@@ -149,7 +149,7 @@ data Option
 
 data Source
     = Dir String
-    | Stdin
+    | Stdin String
 
 data RenameOption = RenameOption
     { renameOptionSource :: Source
@@ -170,10 +170,16 @@ renameOptionParser =
             <> Opt.showDefault
             <> Opt.help "Rename files in this directory")
 
-        stdinParser =
-          Opt.flag' Stdin
+        stdinParser = Stdin <$>
+          Opt.strOption
              ( Opt.long "stdin"
-            <> Opt.help "Rename files read from stdin")
+            <> Opt.metavar "CD"
+            <> Opt.value defaultDir
+            <> Opt.showDefault
+            <> Opt.help (unlines [ "Rename files read from stdin."
+                                 , "When actually renaming,"
+                                 , "prepend CD to the file names"
+                                 ]))
 
         sourceParser =
           (dirParser <|> stdinParser <|> pure (Dir defaultDir))
@@ -186,7 +192,7 @@ renameOptionParser =
        <> Opt.help "Use this editor instead of $EDITOR"))
     <*> fmap words (Opt.strOption
         ( Opt.long "editor-options"
-       <> Opt.metavar "EDITOR_OPTIONS"
+       <> Opt.metavar "OPTIONS"
        <> Opt.value ""
        <> Opt.showDefault
        <> Opt.help ( unwords [ "Additional options to pass to editor."
@@ -194,4 +200,4 @@ renameOptionParser =
                              , "no extra handling are added"])))
     <*> fmap not (Opt.switch
         ( Opt.long "no-sort"
-       <> Opt.help "Don't sort listed files"))
+       <> Opt.help "Don't sort files"))
