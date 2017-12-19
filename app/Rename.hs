@@ -31,20 +31,20 @@ rename option = do
       Just editor -> do
           fileNames <- getFilenames option
           if null fileNames
-          then
-            System.Exit.die "No files found."
-          else do
-            pairsR <- System.IO.Temp.withSystemTempFile "rename-.txt"
-                      (waitPairs
-                         editor (renameOptionEditorOptions option)
-                         fileNames (renameOptionSort option))
-            case pairsR of
-              Left reason ->
-                  System.Exit.die reason
-              Right pairs ->
-                  if null pairs
-                  then System.Exit.die "Nothing to rename."
-                  else renamePairs pairs
+             then
+                 System.Exit.die "No files found."
+             else do
+                 pairsR <- System.IO.Temp.withSystemTempFile "rename-.txt"
+                           (waitPairs
+                               editor (renameOptionEditorOptions option)
+                               fileNames (renameOptionSort option))
+                 case pairsR of
+                   Left reason ->
+                       System.Exit.die reason
+                   Right pairs ->
+                       if null pairs
+                          then System.Exit.die "Nothing to rename."
+                          else renamePairs pairs
 
 
 waitPairs :: String -> [String]
@@ -53,22 +53,23 @@ waitPairs :: String -> [String]
 waitPairs editor editorOptions
           filenames isSort
           tempFile tempHandle = do
-    let filenameStr = unlines $ sort isSort filenames
-    System.IO.hPutStr tempHandle filenameStr
+    let filenamesStr = unlines $ sort isSort filenames
+    System.IO.hPutStr tempHandle filenamesStr
     System.IO.hPutStr tempHandle $ unlines ["", delimiter, ""]
-    System.IO.hPutStr tempHandle filenameStr
+    System.IO.hPutStr tempHandle filenamesStr
     System.IO.hFlush tempHandle
 
-    let createProcess = (System.Process.proc editor $ editorOptions ++ [tempFile])
+    let createProcess = System.Process.proc editor $ editorOptions ++ [tempFile]
     let createProcess' = createProcess {System.Process.std_in = System.Process.CreatePipe}
     (_, _, _, processHandle) <- System.Process.createProcess createProcess'
 
     exitCode <- System.Process.waitForProcess processHandle
     if exitCode /= System.Exit.ExitSuccess
-    then
-      return $ Left $ "Editor terminated with a non-zero exit code: " ++ show exitCode
-    else
-      fileToPairs tempHandle
+       then
+           let msg = "Editor terminated with a non-zero exit code: " ++ show exitCode
+           in return $ Left msg
+       else
+           fileToPairs tempHandle
 
     where
       sort :: Bool -> [String] -> [String]
@@ -80,8 +81,8 @@ waitPairs editor editorOptions
 fileToPairs :: System.IO.Handle -> IO (Either String [(String, String)])
 fileToPairs handle = do
     System.IO.hSeek handle System.IO.AbsoluteSeek 0
-    lines <- lines <$> System.IO.hGetContents handle
-    let result = foldM splitLines ([], [], True) lines
+    filenames <- lines <$> System.IO.hGetContents handle
+    let result = foldM splitLines ([], [], True) filenames
           where
             splitLines acc@(accOlds, accNew, prependOld) line
               | line == delimiter =
@@ -133,13 +134,13 @@ getFilenames option =
 optionParser :: Opt.ParserInfo Option
 optionParser =
     Opt.info
-      (optionParser' <**> Opt.helper)
-      (Opt.progDesc "Rename files using text editor")
+        (optionParser' <**> Opt.helper)
+        (Opt.progDesc "Rename files using text editor")
     where
-      optionParser' =
-        Rename <$> renameOptionParser
+        optionParser' = Rename <$> renameOptionParser
 
-data Option
+
+newtype Option
     = Rename RenameOption
 
 data Source
@@ -157,32 +158,32 @@ renameOptionParser :: Opt.Parser RenameOption
 renameOptionParser =
     let dirParser =
           Opt.flag' Dir
-             ( Opt.long "dir"
+            (  Opt.long "dir"
             <> Opt.help "Rename files in the current directory. This is the default behaviour")
 
         stdinParser =
           Opt.flag' Stdin
-             ( Opt.long "stdin"
+            (  Opt.long "stdin"
             <> Opt.help "Rename files read from stdin")
 
         sourceParser =
-          (dirParser <|> stdinParser <|> pure Dir)
+            (dirParser <|> stdinParser <|> pure Dir)
     in
     RenameOption
     <$> sourceParser
     <*> Opt.optional (Opt.strOption
-        ( Opt.long "editor"
-       <> Opt.metavar "EDITOR"
-       <> Opt.help "Use this editor instead of $EDITOR"))
+          (  Opt.long "editor"
+          <> Opt.metavar "EDITOR"
+          <> Opt.help "Use this editor instead of $EDITOR"))
     <*> fmap words (Opt.strOption
-        ( Opt.long "editor-options"
-       <> Opt.metavar "OPTIONS"
-       <> Opt.value ""
-       <> Opt.showDefault
-       <> Opt.help (unwords [ "Additional options to pass to editor."
-                            , "NOTE: the passed string will simply be split on spaces,"
-                            , "special characters are NOT taken care of"
-                            ])))
+          (  Opt.long "editor-options"
+          <> Opt.metavar "OPTIONS"
+          <> Opt.value ""
+          <> Opt.showDefault
+          <> Opt.help (unwords [ "Additional options to pass to editor."
+                               , "NOTE: the passed string will simply be split on spaces,"
+                               , "special characters are NOT taken care of"
+                               ])))
     <*> fmap not (Opt.switch
-        ( Opt.long "no-sort"
-       <> Opt.help "Don't sort files when putting them to editor"))
+          (  Opt.long "no-sort"
+          <> Opt.help "Don't sort files when putting them to editor"))
