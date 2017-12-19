@@ -44,7 +44,7 @@ rename option = do
               Right pairs ->
                   if null pairs
                   then System.Exit.die "Nothing to rename."
-                  else renamePairs (renameOptionDir option) pairs
+                  else renamePairs pairs
 
 
 waitPairs :: String -> [String]
@@ -104,13 +104,9 @@ fileToPairs handle = do
 
 
 -- TODO incomplete: better handling of non-existent and already existed files
-renamePairs :: String -> [(String, String)] -> IO ()
-renamePairs cd pairs =
-  forM_ pairs' (uncurry System.Directory.renamePath)
-    where
-      pairs' = map addDir pairs
-      addDir (old, new) = ( System.FilePath.combine cd old
-                          , System.FilePath.combine cd new)
+renamePairs :: [(String, String)] -> IO ()
+renamePairs pairs =
+  forM_ pairs (uncurry System.Directory.renamePath)
 
 
 -- TODO incomplete: use a better delimiter?
@@ -128,8 +124,8 @@ getFilenames :: RenameOption -> IO [FilePath]
 getFilenames option =
   case renameOptionSource option of
     Dir ->
-        let dir = renameOptionDir option
-        in System.Directory.listDirectory dir
+        System.Directory.getCurrentDirectory >>=
+        System.Directory.listDirectory
     Stdin ->
         lines <$> getContents
 
@@ -155,7 +151,6 @@ data RenameOption = RenameOption
     , renameOptionEditor :: Maybe String
     , renameOptionEditorOptions :: [String]
     , renameOptionSort :: Bool
-    , renameOptionDir :: String
     }
 
 renameOptionParser :: Opt.Parser RenameOption
@@ -163,15 +158,12 @@ renameOptionParser =
     let dirParser =
           Opt.flag' Dir
              ( Opt.long "dir"
-            <> Opt.help "Rename files in directory DIR. This is the default behaviour")
+            <> Opt.help "Rename files in the current directory. This is the default behaviour")
 
         stdinParser =
           Opt.flag' Stdin
              ( Opt.long "stdin"
-            <> Opt.help (unwords [ "Rename files read from stdin."
-                                 , "When actually renaming,"
-                                 , "prepend DIR to what is been displayed in the editor"
-                                 ]))
+            <> Opt.help "Rename files read from stdin")
 
         sourceParser =
           (dirParser <|> stdinParser <|> pure Dir)
@@ -194,11 +186,3 @@ renameOptionParser =
     <*> fmap not (Opt.switch
         ( Opt.long "no-sort"
        <> Opt.help "Don't sort files when putting them to editor"))
-    <*> Opt.strArgument
-        ( Opt.metavar "DIR"
-       <> Opt.value "./"
-       <> Opt.showDefault
-       <> Opt.help (unwords [ "When renaming or listing files,"
-                            , "do it as if we were in DIR."
-                            , "This doesn't affect what is been displayed in the editor"
-                            ]))

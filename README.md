@@ -51,9 +51,6 @@ Another example:
     # rename all txt files in the current directory
     $ ls *.txt | rename --stdin
 
-    # rename all foo/*.txt
-    $ ls foo/*.txt | rename --stdin foo
-
 See `rename --help` for more options.
 
 
