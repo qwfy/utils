@@ -1,3 +1,6 @@
+{-# LANGUAGE ApplicativeDo #-}
+{-# LANGUAGE NamedFieldPuns #-}
+
 import qualified System.Environment
 import qualified System.Directory
 import qualified System.FilePath
@@ -44,7 +47,7 @@ rename option = do
                    Right pairs ->
                        if null pairs
                           then System.Exit.die "Nothing to rename."
-                          else renamePairs pairs
+                          else renamePairs (renameOptionMissingDir option) pairs
 
 
 waitPairs :: String -> [String]
@@ -105,9 +108,26 @@ fileToPairs handle = do
 
 
 -- TODO incomplete: better handling of non-existent and already existed files
-renamePairs :: [(String, String)] -> IO ()
-renamePairs pairs =
-  forM_ pairs (uncurry System.Directory.renamePath)
+renamePairs :: MissingDir -> [(String, String)] -> IO ()
+renamePairs missingDir pairs =
+  forM_ pairs f
+    where
+      f (old, new) =
+          let doRename = System.Directory.renamePath old new
+              (newDir, _) = System.FilePath.splitFileName new
+          in do
+              -- TODO incomplete: this doesn't include the case when it exists and is a file
+              exist <- System.Directory.doesDirectoryExist newDir
+              if exist
+                 then
+                     doRename
+                 else
+                     case missingDir of
+                       Abort ->
+                           System.Exit.die $ "Directory does not exist: " ++ newDir
+                       Create -> do
+                           System.Directory.createDirectoryIfMissing True newDir
+                           doRename
 
 
 -- TODO incomplete: use a better delimiter?
@@ -147,11 +167,20 @@ data Source
     = Dir
     | Stdin
 
+data MissingDir
+    = Create
+    | Abort
+
+instance Show MissingDir where
+    show Create = "create"
+    show Abort = "abort"
+
 data RenameOption = RenameOption
     { renameOptionSource :: Source
     , renameOptionEditor :: Maybe String
     , renameOptionEditorOptions :: [String]
     , renameOptionSort :: Bool
+    , renameOptionMissingDir :: MissingDir
     }
 
 renameOptionParser :: Opt.Parser RenameOption
@@ -168,14 +197,15 @@ renameOptionParser =
 
         sourceParser =
             (dirParser <|> stdinParser <|> pure Dir)
-    in
-    RenameOption
-    <$> sourceParser
-    <*> Opt.optional (Opt.strOption
+    in do
+        renameOptionSource <- sourceParser
+
+        renameOptionEditor <- Opt.optional (Opt.strOption
           (  Opt.long "editor"
           <> Opt.metavar "EDITOR"
           <> Opt.help "Use this editor instead of $EDITOR"))
-    <*> fmap words (Opt.strOption
+
+        renameOptionEditorOptions <- fmap words (Opt.strOption
           (  Opt.long "editor-options"
           <> Opt.metavar "OPTIONS"
           <> Opt.value ""
@@ -184,6 +214,33 @@ renameOptionParser =
                                , "NOTE: the passed string will simply be split on spaces,"
                                , "special characters are NOT taken care of"
                                ])))
-    <*> fmap not (Opt.switch
+
+        renameOptionSort <- fmap not (Opt.switch
           (  Opt.long "no-sort"
           <> Opt.help "Don't sort files when putting them to editor"))
+
+        renameOptionMissingDir <- Opt.option parseMissingDir
+          (  Opt.long "missing-dir"
+          <> Opt.metavar "ACTION"
+          <> Opt.value Abort
+          <> Opt.showDefault
+          <> Opt.help (unwords [ "Do ACTION if the directory in destination does not exist."
+                               , "ACTION is one of: create, abort"]))
+
+        pure RenameOption
+                { renameOptionSource
+                , renameOptionEditor
+                , renameOptionEditorOptions
+                , renameOptionSort
+                , renameOptionMissingDir
+                }
+
+-- TODO incomplete: add an "ask" option
+parseMissingDir :: Opt.ReadM MissingDir
+parseMissingDir =
+    Opt.eitherReader r
+      where
+        r action
+          | action == "create" = Right Create
+          | action == "abort" = Right Abort
+          | otherwise = Left $ "Unrecognized action \"" ++ action ++ "\""
