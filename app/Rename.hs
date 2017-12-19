@@ -29,7 +29,7 @@ rename option = do
       Nothing ->
           System.Exit.die "No editor found."
       Just editor -> do
-          fileNames <- getFilenames (renameOptionSource option)
+          fileNames <- getFilenames option
           if null fileNames
           then
             System.Exit.die "No files found."
@@ -44,7 +44,7 @@ rename option = do
               Right pairs ->
                   if null pairs
                   then System.Exit.die "Nothing to rename."
-                  else renamePairs (renameOptionSource option) pairs
+                  else renamePairs (renameOptionDir option) pairs
 
 
 waitPairs :: String -> [String]
@@ -104,17 +104,13 @@ fileToPairs handle = do
 
 
 -- TODO incomplete: better handling of non-existent and already existed files
-renamePairs :: Source -> [(String, String)] -> IO ()
-renamePairs source pairs =
+renamePairs :: String -> [(String, String)] -> IO ()
+renamePairs cd pairs =
   forM_ pairs' (uncurry System.Directory.renamePath)
     where
       pairs' = map addDir pairs
       addDir (old, new) = ( System.FilePath.combine cd old
                           , System.FilePath.combine cd new)
-      cd =
-        case source of
-          Dir d -> d
-          Stdin d -> d
 
 
 -- TODO incomplete: use a better delimiter?
@@ -128,11 +124,14 @@ getEditor Nothing =
     System.Environment.lookupEnv "EDITOR"
 
 
-getFilenames :: Source -> IO [FilePath]
-getFilenames (Dir dir) =
-    System.Directory.listDirectory dir
-getFilenames (Stdin _cd) =
-    lines <$> getContents
+getFilenames :: RenameOption -> IO [FilePath]
+getFilenames option =
+  case renameOptionSource option of
+    Dir ->
+        let dir = renameOptionDir option
+        in System.Directory.listDirectory dir
+    Stdin ->
+        lines <$> getContents
 
 
 optionParser :: Opt.ParserInfo Option
@@ -148,41 +147,34 @@ data Option
     = Rename RenameOption
 
 data Source
-    = Dir String
-    | Stdin String
+    = Dir
+    | Stdin
 
 data RenameOption = RenameOption
     { renameOptionSource :: Source
     , renameOptionEditor :: Maybe String
     , renameOptionEditorOptions :: [String]
     , renameOptionSort :: Bool
+    , renameOptionDir :: String
     }
 
 renameOptionParser :: Opt.Parser RenameOption
 renameOptionParser =
-    let defaultDir = "./"
-
-        dirParser = Dir <$>
-          Opt.strOption
+    let dirParser =
+          Opt.flag' Dir
              ( Opt.long "dir"
-            <> Opt.metavar "DIR"
-            <> Opt.value defaultDir
-            <> Opt.showDefault
-            <> Opt.help "Rename files in this directory")
+            <> Opt.help "Rename files in directory DIR. This is the default behaviour")
 
-        stdinParser = Stdin <$>
-          Opt.strOption
+        stdinParser =
+          Opt.flag' Stdin
              ( Opt.long "stdin"
-            <> Opt.metavar "CD"
-            <> Opt.value defaultDir
-            <> Opt.showDefault
-            <> Opt.help (unlines [ "Rename files read from stdin."
+            <> Opt.help (unwords [ "Rename files read from stdin."
                                  , "When actually renaming,"
-                                 , "prepend CD to the file names"
+                                 , "prepend DIR to what is been displayed in the editor"
                                  ]))
 
         sourceParser =
-          (dirParser <|> stdinParser <|> pure (Dir defaultDir))
+          (dirParser <|> stdinParser <|> pure Dir)
     in
     RenameOption
     <$> sourceParser
@@ -195,9 +187,18 @@ renameOptionParser =
        <> Opt.metavar "OPTIONS"
        <> Opt.value ""
        <> Opt.showDefault
-       <> Opt.help ( unwords [ "Additional options to pass to editor."
-                             , "NOTE: the passed string will simply be split on spaces,"
-                             , "special characters are NOT taken care of"])))
+       <> Opt.help (unwords [ "Additional options to pass to editor."
+                            , "NOTE: the passed string will simply be split on spaces,"
+                            , "special characters are NOT taken care of"
+                            ])))
     <*> fmap not (Opt.switch
         ( Opt.long "no-sort"
        <> Opt.help "Don't sort files when putting them to editor"))
+    <*> Opt.strArgument
+        ( Opt.metavar "DIR"
+       <> Opt.value "./"
+       <> Opt.showDefault
+       <> Opt.help (unwords [ "When renaming or listing files,"
+                            , "do it as if we were in DIR."
+                            , "This doesn't affect what is been displayed in the editor"
+                            ]))
