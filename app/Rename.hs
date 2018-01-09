@@ -9,6 +9,7 @@ import qualified System.IO
 import qualified System.IO.Temp
 import qualified System.Exit
 import qualified Data.List as List
+import qualified Data.Set as Set
 import qualified Algorithms.NaturalSort as NaturalSort
 
 import qualified Options.Applicative as Opt
@@ -109,25 +110,41 @@ fileToPairs handle = do
 
 -- TODO incomplete: better handling of non-existent and already existed files
 renamePairs :: MissingDir -> [(String, String)] -> IO ()
-renamePairs missingDir pairs =
-  forM_ pairs f
+renamePairs missingDir pairs = do
+    maybeE <- checkMissingDir missingDir (Set.fromList $ map (getDirname . snd) pairs)
+    case maybeE of
+      Nothing ->
+          forM_ pairs (uncurry System.Directory.renamePath)
+      Just e ->
+          System.Exit.die e
     where
-      f (old, new) =
-          let doRename = System.Directory.renamePath old new
-              (newDir, _) = System.FilePath.splitFileName new
-          in do
-              -- TODO incomplete: this doesn't include the case when it exists and is a file
-              exist <- System.Directory.doesDirectoryExist newDir
-              if exist
-                 then
-                     doRename
-                 else
-                     case missingDir of
-                       Abort ->
-                           System.Exit.die $ "Directory does not exist: " ++ newDir
-                       Create -> do
-                           System.Directory.createDirectoryIfMissing True newDir
-                           doRename
+      getDirname = fst . System.FilePath.splitFileName
+
+checkMissingDir :: MissingDir -> Set.Set String -> IO (Maybe String)
+checkMissingDir Abort dirNames =
+    fmap missingsToMaybe mMissings
+      where
+        missingsToMaybe missings
+          | Set.null missings = Nothing
+          | otherwise =
+              let indentLine x = "    " ++ x
+                  indented = map indentLine $ Set.toList missings
+                  headed = "Nothing is renamed, these directories are missing:" : indented
+              in Just $ unlines headed
+        mMissings =
+            foldM check Set.empty dirNames
+              where
+                check acc dirName = do
+                    exist <- System.Directory.doesDirectoryExist dirName
+                    if not exist
+                       then return $ Set.insert dirName acc
+                       else return acc
+
+checkMissingDir Create dirNames = do
+    mapM_ create (Set.toList dirNames)
+    return Nothing
+      where
+        create = System.Directory.createDirectoryIfMissing True
 
 
 -- TODO incomplete: use a better delimiter?
