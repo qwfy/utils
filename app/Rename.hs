@@ -13,6 +13,7 @@ import qualified Algorithms.NaturalSort as NaturalSort
 import qualified Data.Set as Set
 import qualified Data.List as List
 import qualified Data.Char as Char
+import qualified Data.Bits as Bits
 import Data.Maybe (fromJust, isJust)
 import Data.Semigroup ((<>))
 import Data.Foldable (forM_)
@@ -53,9 +54,24 @@ type RenameAction a = Except.ExceptT Reason (State.StateT Trace IO) a
 
 indent = ("    " ++)
 delimiter = "------ Above is the original file names, put new file names below ------"
-exitCodeWarning = 1
-exitCodeError = 2
 
+-- TODO incomplete: show this in help
+data ExitCode
+    = HasActiveStop Reason
+    | HasErrorFiles Reason
+    | HasSuccessFiles Reason
+
+extractReason (HasActiveStop x) = x
+extractReason (HasErrorFiles x) = x
+extractReason (HasSuccessFiles x) = x
+
+toIndex (HasActiveStop _) = 1
+toIndex (HasErrorFiles _) = 2
+toIndex (HasSuccessFiles _) = 3
+
+toExitCode :: [ExitCode] -> Int
+toExitCode =
+    List.foldl' (\acc code -> Bits.setBit acc (toIndex code)) 0
 
 main = do
     option <- Opt.execParser optionParser
@@ -73,25 +89,47 @@ main = do
           let ioM = State.runStateT stateM initTrace
 
           (either, Trace {errorFiles, successFiles}) <- ioM
-          case either of
-            Right () ->
-                case unlineErrors errorFiles <?+ unlineSuccesses successFiles of
-                  Nothing ->
-                      System.Exit.exitSuccess
-                  Just msg -> do
-                      System.IO.hPutStrLn System.IO.stderr msg
-                      System.Exit.exitWith (System.Exit.ExitFailure exitCodeWarning)
-            Left reason -> do
-                let printError maybeE =
-                        forM_ maybeE (System.IO.hPutStrLn System.IO.stderr)
-                printError $ Just reason
-                printError $ unlineErrors errorFiles
-                printError $ unlineSuccesses successFiles
-                System.Exit.exitWith (System.Exit.ExitFailure exitCodeError)
+          let eStop =
+                  case either of
+                    Right () -> Nothing
+                    Left reason -> Just $ HasActiveStop reason
+          let eErrorFiles =
+                  HasErrorFiles <$> unlineErrors errorFiles
+          let eSuccessFiles =
+                  HasSuccessFiles <$> unlineSuccesses successFiles
 
-Nothing  <?+ _ = Nothing
-(Just x) <?+ Nothing = Just x
-(Just x) <?+ (Just y) = Just $ unlines [x, y]
+          let exitCode = [eStop, eErrorFiles, eSuccessFiles
+                         ] |> filter isJust
+                           |> map fromJust
+                           |> toExitCode
+
+          let printError maybeE =
+                  forM_ maybeE (System.IO.hPutStrLn System.IO.stderr . extractReason)
+
+          if exitCode == 0
+             then
+                System.Exit.exitSuccess
+             else do
+                case eStop of
+                  Nothing ->
+                      case (eErrorFiles, eSuccessFiles) of
+                        (Nothing, _) ->
+                            -- if there are no error files,
+                            -- then be a quiet man and don't print success files
+                            return ()
+                        (a@(Just _), Nothing) ->
+                            printError a
+                        (a@(Just _), b@(Just _)) -> do
+                            printError a
+                            printError b
+                  Just _ -> do
+                      printError eStop
+                      printError eErrorFiles
+                      printError eSuccessFiles
+                System.Exit.exitWith (System.Exit.ExitFailure exitCode)
+
+infixl 0 |>
+a |> f = f a
 
 unlineErrors :: [(Pair, Reason)] -> Maybe String
 unlineErrors [] = Nothing
