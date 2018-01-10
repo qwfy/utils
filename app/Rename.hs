@@ -12,48 +12,174 @@ import qualified Data.List as List
 import qualified Data.Set as Set
 import qualified Algorithms.NaturalSort as NaturalSort
 
+import System.IO.Error (catchIOError)
+
 import qualified Options.Applicative as Opt
 
 import Data.Semigroup ((<>))
 import Control.Applicative ((<**>), (<|>))
-import Control.Monad (forM_, foldM)
+import Control.Monad (forM_, foldM, when)
 
+import Control.Monad.Trans.State (StateT)
+import qualified Control.Monad.Trans.State as State
+
+import Control.Monad.Trans.Except (ExceptT)
+import qualified Control.Monad.Trans.Except as Except
+
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Trans.Class (lift)
+import Data.Maybe (fromJust)
+
+type Pair = (FilePath, FilePath)
+type Pairs = [Pair]
+
+-- reason of error
+type Reason = String
+
+-- TODO incomplete
+-- maybe replace list of pairs with list of integer ids, for efficiency
+data Trace = Trace
+    {
+    -- files that are renamed successfully.
+    -- this exists (other than just using allFiles-errorFiles) because that
+    -- we want to record that if there are files are touched, and if so, which ones
+      successFiles :: Pairs
+
+    -- an error occurred when renaming these files.
+    -- like nonexistent files, permission errors, etc.
+    , errorFiles :: [(Pair, Reason)]
+    }
+
+type RenameAction a = ExceptT Reason (StateT Trace IO) a
 
 main = do
     option <- Opt.execParser optionParser
     case option of
-      Rename renameOption ->
-          rename renameOption
+      Rename renameOption -> do
+          let initTrace = Trace
+                { successFiles = []
+                , errorFiles = []
+                }
+
+          -- runExceptT :: ExceptT e m a -> m (Either e a)
+          -- stateM :: StateT Reason IO (Either Reason a)
+          let stateM = Except.runExceptT (rename renameOption)
+
+          -- runStateT :: StateT s m a -> s -> m (a, s)
+          let ioM = State.runStateT stateM initTrace
+          (either, Trace {errorFiles, successFiles}) <- ioM
+          let traceMsg = unlineErrors errorFiles <+ unlineSuccesses successFiles
+          case either of
+            Right () ->
+                case traceMsg of
+                  Nothing ->
+                      System.Exit.exitSuccess
+                  Just msg -> do
+                      System.IO.hPutStrLn System.IO.stderr msg
+                      System.Exit.exitWith (System.Exit.ExitFailure 1)
+            Left reason -> do
+                let msg = fromJust (Just reason <+ traceMsg)
+                System.IO.hPutStrLn System.IO.stderr msg
+                System.Exit.exitWith (System.Exit.ExitFailure 2)
+
+Nothing  <+ _ = Nothing
+(Just x) <+ Nothing = Just x
+(Just x) <+ (Just y) = Just $ unlines [x, y]
+
+unlineErrors :: [(Pair, Reason)] -> Maybe String
+unlineErrors [] = Nothing
+unlineErrors xs@(_:_) =
+    Just . unlines $ "Errors occurred when renaming these files:" : map f xs
+      where
+        f ((old, _new), reason) =
+            indentString ++ unwords [old, ":", reason]
+
+unlineSuccesses :: Pairs -> Maybe String
+unlineSuccesses [] = Nothing
+unlineSuccesses xs@(_:_) =
+    Just . unlines $ "These files are renamed successfully:" : map f xs
+      where
+        f (old, new) =
+            indentString ++ old
 
 
-rename :: RenameOption -> IO ()
+addErrorFiles pr = lift $ State.modify (\s -> s {errorFiles = pr : errorFiles s})
+
+addSuccessFiles fp = lift $ State.modify (\s -> s {successFiles = fp : successFiles s})
+
+rename :: RenameOption -> RenameAction ()
 rename option = do
-    editorO <- getEditor (renameOptionEditor option)
-    case editorO of
-      Nothing ->
-          System.Exit.die "No editor found."
-      Just editor -> do
-          fileNames <- getFilenames option
-          if null fileNames
-             then
-                 System.Exit.die "No files found."
-             else do
-                 pairsR <- System.IO.Temp.withSystemTempFile "rename-.txt"
-                           (waitPairs
-                               editor (renameOptionEditorOptions option)
-                               fileNames (renameOptionSort option))
-                 case pairsR of
-                   Left reason ->
-                       System.Exit.die reason
-                   Right pairs ->
-                       if null pairs
-                          then System.Exit.die "Nothing to rename."
-                          else renamePairs (renameOptionMissingDir option) pairs
+    editor <- getEditor option
+    fileNames <- getFilenames option
+    pairsE <- liftIO $ System.IO.Temp.withSystemTempFile "rename-.txt"
+               (waitPairs
+                   editor (renameOptionEditorOptions option)
+                   fileNames (renameOptionSort option))
+    case pairsE of
+      Left e ->
+          Except.throwE e
+      Right pairs ->
+          if null pairs
+             then Except.throwE "Nothing to rename."
+             else renamePairs option pairs
 
+getDirname = fst . System.FilePath.splitFileName
+
+renamePairs :: RenameOption -> Pairs -> RenameAction ()
+renamePairs option pairs = do
+    when (renameOptionMissingDir option == Abort)
+         (do missingEither <- liftIO $ checkMissingDir (Set.fromList $ map (getDirname . snd) pairs)
+             case missingEither of
+               Left e ->
+                   Except.throwE e
+               Right () ->
+                   return ())
+    mapM_ renameOne pairs
+  where
+    renameOne pair@(old, new) = do
+        result <- liftIO $ catchIOError
+                      (System.Directory.createDirectoryIfMissing True (getDirname new) >>
+                       System.Directory.renamePath old new >>
+                       return Nothing)
+                      (return . Just . show)
+        case result of
+          Nothing ->
+              addSuccessFiles pair
+          Just e -> do
+              addErrorFiles (pair, e)
+              when (renameOptionStopOnError option)
+                   (Except.throwE "Error encountered while renaming.")
+
+
+
+checkMissingDir :: Set.Set String -> IO (Either Reason ())
+checkMissingDir dirNames =
+    catchIOError
+        (checkMissingDir' dirNames)
+        (return . Left . show)
+
+checkMissingDir' dirNames =
+    fmap missingsToEither mMissings
+      where
+        mMissings =
+            foldM check Set.empty dirNames
+              where
+                check acc dirName = do
+                    exist <- System.Directory.doesDirectoryExist dirName
+                    if not exist
+                       then return $ Set.insert dirName acc
+                       else return acc
+        missingsToEither missings
+          | Set.null missings = Right ()
+          | otherwise =
+              let indentLine x = indentString ++ x
+                  indented = map indentLine $ Set.toList missings
+                  headed = "Nothing is renamed, these directories are missing:" : indented
+              in Left $ unlines headed
 
 waitPairs :: String -> [String]
           -> [String] -> Bool
-          -> FilePath -> System.IO.Handle -> IO (Either String [(String, String)])
+          -> FilePath -> System.IO.Handle -> IO (Either Reason Pairs)
 waitPairs editor editorOptions
           filenames isSort
           tempFile tempHandle = do
@@ -82,7 +208,7 @@ waitPairs editor editorOptions
 
 
 -- TODO incomplete: strip white spaces
-fileToPairs :: System.IO.Handle -> IO (Either String [(String, String)])
+fileToPairs :: System.IO.Handle -> IO (Either Reason Pairs)
 fileToPairs handle = do
     System.IO.hSeek handle System.IO.AbsoluteSeek 0
     filenames <- lines <$> System.IO.hGetContents handle
@@ -104,68 +230,42 @@ fileToPairs handle = do
           return $ Left reason
       Right (olds, news, _) ->
           if length olds == length news
-          then return $ Right (zip olds news)
-          else return $ Left "Number of old file names does not equal to number of new file names."
-
-
--- TODO incomplete: better handling of non-existent and already existed files
-renamePairs :: MissingDir -> [(String, String)] -> IO ()
-renamePairs missingDir pairs = do
-    maybeE <- checkMissingDir missingDir (Set.fromList $ map (getDirname . snd) pairs)
-    case maybeE of
-      Nothing ->
-          forM_ pairs (uncurry System.Directory.renamePath)
-      Just e ->
-          System.Exit.die e
-    where
-      getDirname = fst . System.FilePath.splitFileName
-
-checkMissingDir :: MissingDir -> Set.Set String -> IO (Maybe String)
-checkMissingDir Abort dirNames =
-    fmap missingsToMaybe mMissings
-      where
-        missingsToMaybe missings
-          | Set.null missings = Nothing
-          | otherwise =
-              let indentLine x = "    " ++ x
-                  indented = map indentLine $ Set.toList missings
-                  headed = "Nothing is renamed, these directories are missing:" : indented
-              in Just $ unlines headed
-        mMissings =
-            foldM check Set.empty dirNames
-              where
-                check acc dirName = do
-                    exist <- System.Directory.doesDirectoryExist dirName
-                    if not exist
-                       then return $ Set.insert dirName acc
-                       else return acc
-
-checkMissingDir Create dirNames = do
-    mapM_ create (Set.toList dirNames)
-    return Nothing
-      where
-        create = System.Directory.createDirectoryIfMissing True
+             then return $ Right (zip olds news)
+             else return $ Left "Number of old file names does not equal to number of new file names."
 
 
 -- TODO incomplete: use a better delimiter?
 delimiter = "------ Above is the original file names, put new file names below ------"
 
+getEditor option =
+    case renameOptionEditor option of
+      Just editor ->
+          return editor
+      Nothing -> do
+          maybeEditor <- liftIO $ System.Environment.lookupEnv "EDITOR"
+          case maybeEditor of
+            Nothing ->
+                Except.throwE "No editor found."
+            Just editor ->
+                return editor
 
-getEditor :: Maybe String -> IO (Maybe String)
-getEditor (Just editor) =
-    return $ Just editor
-getEditor Nothing =
-    System.Environment.lookupEnv "EDITOR"
 
-
-getFilenames :: RenameOption -> IO [FilePath]
 getFilenames option =
-  case renameOptionSource option of
-    Dir ->
-        System.Directory.getCurrentDirectory >>=
-        System.Directory.listDirectory
-    Stdin ->
-        lines <$> getContents
+    let mLines = case renameOptionSource option of
+                   Dir ->
+                       System.Directory.getCurrentDirectory >>=
+                       System.Directory.listDirectory
+                   Stdin ->
+                       lines <$> getContents
+    in do
+        lines <- liftIO mLines
+        if not $ null lines
+           then
+               return lines
+           else
+               case renameOptionSource option of
+                 Dir -> Except.throwE "No files found."
+                 Stdin -> Except.throwE "No files specified."
 
 
 optionParser :: Opt.ParserInfo Option
@@ -187,6 +287,7 @@ data Source
 data MissingDir
     = Create
     | Abort
+    deriving (Eq)
 
 instance Show MissingDir where
     show Create = "create"
@@ -198,6 +299,7 @@ data RenameOption = RenameOption
     , renameOptionEditorOptions :: [String]
     , renameOptionSort :: Bool
     , renameOptionMissingDir :: MissingDir
+    , renameOptionStopOnError :: Bool
     }
 
 renameOptionParser :: Opt.Parser RenameOption
@@ -244,12 +346,17 @@ renameOptionParser =
           <> Opt.help (unwords [ "Do ACTION if the directory in destination does not exist."
                                , "ACTION is one of: create, abort"]))
 
+        renameOptionStopOnError <- fmap not (Opt.switch
+          (  Opt.long "continue-on-error"
+          <> Opt.help "Continue renaming the rest of the files when a previous one has failed"))
+
         pure RenameOption
                 { renameOptionSource
                 , renameOptionEditor
                 , renameOptionEditorOptions
                 , renameOptionSort
                 , renameOptionMissingDir
+                , renameOptionStopOnError
                 }
 
 -- TODO incomplete: add an "ask" option
@@ -261,3 +368,5 @@ parseMissingDir =
           | action == "create" = Right Create
           | action == "abort" = Right Abort
           | otherwise = Left $ "Unrecognized action \"" ++ action ++ "\""
+
+indentString = "    "
