@@ -8,41 +8,39 @@ import qualified System.Process
 import qualified System.IO
 import qualified System.IO.Temp
 import qualified System.Exit
-import qualified Data.List as List
-import qualified Data.Set as Set
 import qualified Algorithms.NaturalSort as NaturalSort
 
-import System.IO.Error (catchIOError)
+import qualified Data.Set as Set
+import qualified Data.List as List
+import qualified Data.Char as Char
+import Data.Maybe (fromJust, isJust)
+import Data.Semigroup ((<>))
+import Data.Foldable (forM_)
 
 import qualified Options.Applicative as Opt
 
-import Data.Semigroup ((<>))
 import Control.Applicative ((<**>), (<|>))
-import Control.Monad (forM_, foldM, when)
-
-import Control.Monad.Trans.State (StateT)
-import qualified Control.Monad.Trans.State as State
-
-import Control.Monad.Trans.Except (ExceptT)
-import qualified Control.Monad.Trans.Except as Except
-
+import Control.Monad (foldM, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Class (lift)
-import Data.Maybe (fromJust)
+import System.IO.Error (catchIOError)
+
+import qualified Control.Monad.Trans.State as State
+import qualified Control.Monad.Trans.Except as Except
+
 
 type Pair = (FilePath, FilePath)
 type Pairs = [Pair]
 
--- reason of error
 type Reason = String
 
--- TODO incomplete
+-- TODO
 -- maybe replace list of pairs with list of integer ids, for efficiency
 data Trace = Trace
     {
-    -- files that are renamed successfully.
+    -- files that are successfully renamed.
     -- this exists (other than just using allFiles-errorFiles) because that
-    -- we want to record that if there are files are touched, and if so, which ones
+    -- we want to record which ones have been touched
       successFiles :: Pairs
 
     -- an error occurred when renaming these files.
@@ -50,148 +48,151 @@ data Trace = Trace
     , errorFiles :: [(Pair, Reason)]
     }
 
-type RenameAction a = ExceptT Reason (StateT Trace IO) a
+type RenameAction a = Except.ExceptT Reason (State.StateT Trace IO) a
+
+
+indent = ("    " ++)
+delimiter = "------ Above is the original file names, put new file names below ------"
+exitCodeWarning = 1
+exitCodeError = 2
+
 
 main = do
     option <- Opt.execParser optionParser
     case option of
       Rename renameOption -> do
+          -- runExceptT :: ExceptT e m a -> m (Either e a)
+          let stateM = Except.runExceptT (rename renameOption)
+
           let initTrace = Trace
                 { successFiles = []
                 , errorFiles = []
                 }
 
-          -- runExceptT :: ExceptT e m a -> m (Either e a)
-          -- stateM :: StateT Reason IO (Either Reason a)
-          let stateM = Except.runExceptT (rename renameOption)
-
           -- runStateT :: StateT s m a -> s -> m (a, s)
           let ioM = State.runStateT stateM initTrace
+
           (either, Trace {errorFiles, successFiles}) <- ioM
-          let traceMsg = unlineErrors errorFiles <+ unlineSuccesses successFiles
           case either of
             Right () ->
-                case traceMsg of
+                case unlineErrors errorFiles <?+ unlineSuccesses successFiles of
                   Nothing ->
                       System.Exit.exitSuccess
                   Just msg -> do
                       System.IO.hPutStrLn System.IO.stderr msg
-                      System.Exit.exitWith (System.Exit.ExitFailure 1)
+                      System.Exit.exitWith (System.Exit.ExitFailure exitCodeWarning)
             Left reason -> do
-                let msg = fromJust (Just reason <+ traceMsg)
-                System.IO.hPutStrLn System.IO.stderr msg
-                System.Exit.exitWith (System.Exit.ExitFailure 2)
+                let printError maybeE =
+                        forM_ maybeE (System.IO.hPutStrLn System.IO.stderr)
+                printError $ Just reason
+                printError $ unlineErrors errorFiles
+                printError $ unlineSuccesses successFiles
+                System.Exit.exitWith (System.Exit.ExitFailure exitCodeError)
 
-Nothing  <+ _ = Nothing
-(Just x) <+ Nothing = Just x
-(Just x) <+ (Just y) = Just $ unlines [x, y]
+Nothing  <?+ _ = Nothing
+(Just x) <?+ Nothing = Just x
+(Just x) <?+ (Just y) = Just $ unlines [x, y]
 
 unlineErrors :: [(Pair, Reason)] -> Maybe String
 unlineErrors [] = Nothing
 unlineErrors xs@(_:_) =
-    Just . unlines $ "Errors occurred when renaming these files:" : map f xs
+    Just . unlines $ "Error occurred when renaming these files:" : map toLine xs
       where
-        f ((old, _new), reason) =
-            indentString ++ unwords [old, ":", reason]
+        toLine ((old, _new), reason) =
+            indent $ unwords [old, ":", reason]
 
 unlineSuccesses :: Pairs -> Maybe String
 unlineSuccesses [] = Nothing
 unlineSuccesses xs@(_:_) =
-    Just . unlines $ "These files are renamed successfully:" : map f xs
+    Just . unlines $ "These files are renamed successfully:" : map toLine xs
       where
-        f (old, new) =
-            indentString ++ old
+        toLine (old, _new) =
+            indent old
 
-
-addErrorFiles pr = lift $ State.modify (\s -> s {errorFiles = pr : errorFiles s})
-
-addSuccessFiles fp = lift $ State.modify (\s -> s {successFiles = fp : successFiles s})
 
 rename :: RenameOption -> RenameAction ()
 rename option = do
     editor <- getEditor option
-    fileNames <- getFilenames option
-    pairsE <- liftIO $ System.IO.Temp.withSystemTempFile "rename-.txt"
-               (waitPairs
-                   editor (renameOptionEditorOptions option)
-                   fileNames (renameOptionSort option))
+    fileNames <- getFileNames option
+    pairsE <- liftIO $
+                System.IO.Temp.withSystemTempFile "rename-.txt"
+                   (waitPairs
+                       editor (renameOptionEditorOptions option)
+                       fileNames (renameOptionSort option))
     case pairsE of
       Left e ->
           Except.throwE e
       Right pairs ->
-          if null pairs
-             then Except.throwE "Nothing to rename."
-             else renamePairs option pairs
-
-getDirname = fst . System.FilePath.splitFileName
+          renamePairs option pairs
 
 renamePairs :: RenameOption -> Pairs -> RenameAction ()
 renamePairs option pairs = do
     when (renameOptionMissingDir option == Abort)
-         (do missingEither <- liftIO $ checkMissingDir (Set.fromList $ map (getDirname . snd) pairs)
-             case missingEither of
-               Left e ->
+         (do let paths = Set.fromList $ map (getDirname . snd) pairs
+             err <- liftIO $ checkMissingDir paths
+             case err of
+               Just e ->
                    Except.throwE e
-               Right () ->
+               Nothing ->
                    return ())
     mapM_ renameOne pairs
   where
     renameOne pair@(old, new) = do
-        result <- liftIO $ catchIOError
-                      (System.Directory.createDirectoryIfMissing True (getDirname new) >>
-                       System.Directory.renamePath old new >>
-                       return Nothing)
-                      (return . Just . show)
-        case result of
+        let doit = do
+                System.Directory.createDirectoryIfMissing True (getDirname new)
+                System.Directory.renamePath old new
+                return Nothing
+        err <- liftIO $ catchIOError doit (return . Just . show)
+        case err of
           Nothing ->
-              addSuccessFiles pair
+              lift $ addSuccessFiles pair
           Just e -> do
-              addErrorFiles (pair, e)
+              lift $ addErrorFiles (pair, e)
               when (renameOptionStopOnError option)
-                   (Except.throwE "Error encountered while renaming.")
+                   (Except.throwE "Renaming stopped because of an error.")
 
 
-
-checkMissingDir :: Set.Set String -> IO (Either Reason ())
+checkMissingDir :: Set.Set FilePath -> IO (Maybe Reason)
 checkMissingDir dirNames =
     catchIOError
         (checkMissingDir' dirNames)
-        (return . Left . show)
+        (return . Just . show)
 
 checkMissingDir' dirNames =
-    fmap missingsToEither mMissings
+    fmap missingsToMaybe mMissings
       where
         mMissings =
             foldM check Set.empty dirNames
-              where
-                check acc dirName = do
-                    exist <- System.Directory.doesDirectoryExist dirName
-                    if not exist
-                       then return $ Set.insert dirName acc
-                       else return acc
-        missingsToEither missings
-          | Set.null missings = Right ()
+        check acc dirName = do
+            exist <- System.Directory.doesDirectoryExist dirName
+            if not exist
+               then return $ Set.insert dirName acc
+               else return acc
+        missingsToMaybe missings
+          | Set.null missings = Nothing
           | otherwise =
-              let indentLine x = indentString ++ x
-                  indented = map indentLine $ Set.toList missings
-                  headed = "Nothing is renamed, these directories are missing:" : indented
-              in Left $ unlines headed
+              let indented = map indent $ Set.toList missings
+                  header = "Nothing is renamed, these directories are missing:"
+              in Just $ unlines (header : indented)
 
 waitPairs :: String -> [String]
-          -> [String] -> Bool
-          -> FilePath -> System.IO.Handle -> IO (Either Reason Pairs)
+          -> [FilePath] -> Bool
+          -> FilePath -> System.IO.Handle
+          -> IO (Either Reason Pairs)
 waitPairs editor editorOptions
-          filenames isSort
+          fileNames isSort
           tempFile tempHandle = do
-    let filenamesStr = unlines $ sort isSort filenames
-    System.IO.hPutStr tempHandle filenamesStr
+
+    -- write file names to the temp file
+    let fileNamesStr = unlines $ sort isSort fileNames
+    System.IO.hPutStr tempHandle fileNamesStr
     System.IO.hPutStr tempHandle $ unlines ["", delimiter, ""]
-    System.IO.hPutStr tempHandle filenamesStr
+    System.IO.hPutStr tempHandle fileNamesStr
     System.IO.hFlush tempHandle
 
-    let createProcess = System.Process.proc editor $ editorOptions ++ [tempFile]
-    let createProcess' = createProcess {System.Process.std_in = System.Process.CreatePipe}
-    (_, _, _, processHandle) <- System.Process.createProcess createProcess'
+    let createProcess' = System.Process.proc editor $ editorOptions ++ [tempFile]
+    let createProcess = createProcess' {System.Process.std_in = System.Process.CreatePipe}
+    (_, _, _, processHandle) <- System.Process.createProcess createProcess
 
     exitCode <- System.Process.waitForProcess processHandle
     if exitCode /= System.Exit.ExitSuccess
@@ -207,36 +208,52 @@ waitPairs editor editorOptions
       sort True xs = List.sortBy NaturalSort.compare xs
 
 
--- TODO incomplete: strip white spaces
 fileToPairs :: System.IO.Handle -> IO (Either Reason Pairs)
 fileToPairs handle = do
     System.IO.hSeek handle System.IO.AbsoluteSeek 0
-    filenames <- lines <$> System.IO.hGetContents handle
-    let result = foldM splitLines ([], [], True) filenames
+    fileNames <- lines <$> System.IO.hGetContents handle
+    let result = foldM splitLines ([], [], True) fileNames
           where
-            splitLines acc@(accOlds, accNew, prependOld) line
+            splitLines acc@(accOlds, accNews, prependOld) line'
               | line == delimiter =
                   if prependOld
-                  then Right (accOlds, accNew, False)
-                  else Left "Multiple delimiters found."
+                     then Right (accOlds, accNews, False)
+                     else Left "Multiple delimiters found."
               | line == "" =
                   Right acc
               | otherwise =
                   if prependOld
-                  then Right (line:accOlds, accNew, prependOld)
-                  else Right (accOlds, line:accNew, prependOld)
+                     then Right (line:accOlds, accNews, prependOld)
+                     else Right (accOlds, line:accNews, prependOld)
+              where line = strip line'
     case result of
       Left reason ->
           return $ Left reason
       Right (olds, news, _) ->
           if length olds == length news
-             then return $ Right (zip olds news)
-             else return $ Left "Number of old file names does not equal to number of new file names."
+             then
+                 let pairs = zip olds news
+                 in return $ if null pairs
+                                then Left "No files in editor."
+                                else Right pairs
+             else
+                 return $ Left "Number of old file names does not equal to number of new file names."
+
+strip :: String -> String
+strip =
+    let stripPrefix = dropWhile Char.isSpace
+    in reverse . stripPrefix . reverse . stripPrefix
+
+getDirname = fst . System.FilePath.splitFileName
+
+addErrorFiles x =
+    State.modify (\s -> s {errorFiles = x : errorFiles s})
+
+addSuccessFiles x =
+    State.modify (\s -> s {successFiles = x : successFiles s})
 
 
--- TODO incomplete: use a better delimiter?
-delimiter = "------ Above is the original file names, put new file names below ------"
-
+getEditor :: RenameOption -> RenameAction String
 getEditor option =
     case renameOptionEditor option of
       Just editor ->
@@ -250,15 +267,16 @@ getEditor option =
                 return editor
 
 
-getFilenames option =
-    let mLines = case renameOptionSource option of
-                   Dir ->
-                       System.Directory.getCurrentDirectory >>=
-                       System.Directory.listDirectory
-                   Stdin ->
-                       lines <$> getContents
+getFileNames :: RenameOption -> RenameAction [FilePath]
+getFileNames option =
+    let ioLines =
+            case renameOptionSource option of
+              Dir ->
+                  System.Directory.getCurrentDirectory >>=
+                  System.Directory.listDirectory
+              Stdin ->lines <$> getContents
     in do
-        lines <- liftIO mLines
+        lines <- liftIO ioLines
         if not $ null lines
            then
                return lines
@@ -368,5 +386,3 @@ parseMissingDir =
           | action == "create" = Right Create
           | action == "abort" = Right Abort
           | otherwise = Left $ "Unrecognized action \"" ++ action ++ "\""
-
-indentString = "    "
