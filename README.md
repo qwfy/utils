@@ -9,7 +9,9 @@
 
 ### How to Install
 
-First, make sure you have [stack](https://docs.haskellstack.org/en/stable/install_and_upgrade/)
+Pre-built binaries (for linux) are available at the [release page](https://github.com/qwfy/utils/releases).
+
+Or you can build from source. First, make sure you have [stack](https://docs.haskellstack.org/en/stable/install_and_upgrade/)
 installed, then run these commands in your shell:
 
     git clone https://github.com/qwfy/utils.git
