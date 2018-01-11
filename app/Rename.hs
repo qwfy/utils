@@ -1,5 +1,6 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 import qualified System.Environment
 import qualified System.Directory
@@ -31,6 +32,7 @@ import qualified Control.Monad.Trans.Except as Except
 
 import qualified Version
 import Open
+import qualified Development.GitRev as Git
 
 
 type Pair = (FilePath, FilePath)
@@ -333,12 +335,13 @@ getFileNames option =
 optionParser :: Opt.ParserInfo Option
 optionParser =
     Opt.info
-        (optionParser' <**> Version.parser "0.5.0" <**> Opt.helper)
+        (optionParser' <**> versionParser <**> Opt.helper)
         (  Opt.progDesc "Rename files using text editor"
         <> Opt.failureCode (setErrorBit 0 exitCodeIndexParseFailure)
         <> Opt.footerDoc (Just exitCodeExplaination)
         )
     where
+        versionParser = Version.parser "0.5.0" $(Git.gitHash) $(Git.gitDirty)
         optionParser' = Rename <$> renameOptionParser
         bitAtIndex (Index index) str = PP.text $ show index ++ ": " ++ str
         paragraph sentences =
