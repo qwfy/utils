@@ -1,5 +1,5 @@
 name:                utils
-version:             0.1.0.0
+version:             0.0.0.0
 synopsis:            Some convenient utilities
 description:         Please see README.md
 homepage:            https://github.com/qwfy/utils
@@ -7,10 +7,19 @@ license:             BSD3
 license-file:        LICENSE
 author:              Incomplete
 maintainer:          incomplete@aixon.co
-copyright:           2016 Incomplete
+copyright:           2017 Incomplete
 category:            Utility
 build-type:          Simple
 cabal-version:       >=1.10
+
+library
+  hs-source-dirs: src
+  build-depends: base
+               , gitrev
+               , optparse-applicative
+  exposed-modules: Version
+                 , Open
+  default-language: Haskell2010
 
 executable hr
   hs-source-dirs:      app
@@ -20,6 +29,7 @@ executable hr
                      , text
                      , time
                      , terminal-size
+                     , utils
   default-language:    Haskell2010
 
 executable rename
@@ -38,6 +48,7 @@ executable rename
                      , containers
                      , transformers
                      , ansi-wl-pprint
+                     , utils
   default-language:    Haskell2010
 
 source-repository head

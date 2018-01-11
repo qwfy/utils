@@ -15,7 +15,6 @@ import qualified Data.List as List
 import qualified Data.Char as Char
 import qualified Data.Bits as Bits
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
-import Data.Maybe (fromJust, isJust)
 import Data.Semigroup ((<>))
 import Data.Foldable (forM_)
 
@@ -29,6 +28,9 @@ import System.IO.Error (catchIOError)
 
 import qualified Control.Monad.Trans.State as State
 import qualified Control.Monad.Trans.Except as Except
+
+import qualified Version
+import Open
 
 
 type Pair = (FilePath, FilePath)
@@ -107,8 +109,7 @@ main = do
                   HasSuccessFiles <$> unlineSuccesses successFiles
 
           let exitCode = [eStop, eErrorFiles, eSuccessFiles
-                         ] |> filter isJust
-                           |> map fromJust
+                         ] |> collectJust
                            |> toExitCode
 
           let printError maybeE =
@@ -135,9 +136,6 @@ main = do
                       printError eErrorFiles
                       printError eSuccessFiles
                 System.Exit.exitWith (System.Exit.ExitFailure exitCode)
-
-infixl 0 |>
-a |> f = f a
 
 unlineErrors :: [(Pair, Reason)] -> Maybe String
 unlineErrors [] = Nothing
@@ -335,7 +333,7 @@ getFileNames option =
 optionParser :: Opt.ParserInfo Option
 optionParser =
     Opt.info
-        (optionParser' <**> Opt.helper)
+        (optionParser' <**> Version.parser "0.5.0" <**> Opt.helper)
         (  Opt.progDesc "Rename files using text editor"
         <> Opt.failureCode (setErrorBit 0 exitCodeIndexParseFailure)
         <> Opt.footerDoc (Just exitCodeExplaination)
@@ -366,7 +364,6 @@ optionParser =
                     , "then the error corresponding to that bit has happened."
                     ]
                 in PP.vsep $ List.intersperse PP.empty [okCase, errorCase, bitInfo]
-
 
 newtype Option
     = Rename RenameOption
