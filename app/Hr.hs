@@ -1,24 +1,15 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ExtendedDefaultRules #-}
-{-# OPTIONS_GHC -fno-warn-type-defaults #-}
-
-module Main where
-
-import Shelly
 import qualified Data.Text as T
-import qualified Data.Text.IO
-import qualified Data.Time.LocalTime as Lt
+import qualified Data.Text.IO as TIO
+import qualified Data.Time.LocalTime as LocalTime
 import qualified Data.Time.Clock as Clock
-import qualified System.IO
+import qualified System.Console.Terminal.Size as TermSize
 
 main = do
-    System.IO.hSetBuffering System.IO.stdout System.IO.LineBuffering
-    shelly $ do
-      crntTime <- liftIO $ fmap Lt.zonedTimeToUTC Lt.getZonedTime
-      widthStr <- silently $ run "tput" ["cols"]
-      let width = read . T.unpack $ widthStr :: Int
-      let lines = hr width crntTime
-      liftIO $ Data.Text.IO.putStrLn (T.intercalate "\n" lines)
+    termSize <- TermSize.size
+    let termWidth = maybe 80 TermSize.width termSize
+    crntTime <- fmap LocalTime.zonedTimeToUTC LocalTime.getZonedTime
+    let lines = hr termWidth crntTime
+    TIO.putStrLn $ T.unlines lines
 
 hr :: Int -> Clock.UTCTime -> [T.Text]
 hr n crntTime =

@@ -18,8 +18,8 @@ executable hr
   ghc-options:         -O2 -threaded -rtsopts -with-rtsopts=-N
   build-depends:       base
                      , text
-                     , shelly
                      , time
+                     , terminal-size
   default-language:    Haskell2010
 
 executable rename
