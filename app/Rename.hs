@@ -278,7 +278,7 @@ fileToPairs handle = do
       Right (olds, news, _) ->
           if length olds == length news
              then
-                 let pairs = zip olds news
+                 let pairs = reverse $ zip olds news
                  in return $ if null pairs
                                 then Left "No files in editor."
                                 else Right pairs
