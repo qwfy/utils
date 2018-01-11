@@ -14,6 +14,7 @@ import qualified Data.Set as Set
 import qualified Data.List as List
 import qualified Data.Char as Char
 import qualified Data.Bits as Bits
+import qualified Text.PrettyPrint.ANSI.Leijen as PP
 import Data.Maybe (fromJust, isJust)
 import Data.Semigroup ((<>))
 import Data.Foldable (forM_)
@@ -55,7 +56,6 @@ type RenameAction a = Except.ExceptT Reason (State.StateT Trace IO) a
 indent = ("    " ++)
 delimiter = "------ Above is the original file names, put new file names below ------"
 
--- TODO incomplete: show this in help
 data ExitCode
     = HasActiveStop Reason
     | HasErrorFiles Reason
@@ -65,13 +65,21 @@ extractReason (HasActiveStop x) = x
 extractReason (HasErrorFiles x) = x
 extractReason (HasSuccessFiles x) = x
 
-toIndex (HasActiveStop _) = 1
-toIndex (HasErrorFiles _) = 2
-toIndex (HasSuccessFiles _) = 3
+newtype Index = Index Int
+
+setErrorBit code (Index i) = Bits.setBit code i
+
+-- 1 is reserved for command line parsing failure
+exitCodeIndexParseFailure = Index 1
+
+toIndex (HasErrorFiles _)   = Index 2
+toIndex (HasSuccessFiles _) = Index 3
+toIndex (HasActiveStop _)   = Index 4
 
 toExitCode :: [ExitCode] -> Int
 toExitCode =
-    List.foldl' (\acc code -> Bits.setBit acc (toIndex code)) 0
+    List.foldl' (\acc code -> setErrorBit acc (toIndex code)) 0
+
 
 main = do
     option <- Opt.execParser optionParser
@@ -106,7 +114,7 @@ main = do
           let printError maybeE =
                   forM_ maybeE (System.IO.hPutStrLn System.IO.stderr . extractReason)
 
-          if exitCode == 0
+          if exitCode == 0 || exitCode == setErrorBit 0 (toIndex $ HasSuccessFiles "")
              then
                 System.Exit.exitSuccess
              else do
@@ -328,9 +336,36 @@ optionParser :: Opt.ParserInfo Option
 optionParser =
     Opt.info
         (optionParser' <**> Opt.helper)
-        (Opt.progDesc "Rename files using text editor")
+        (  Opt.progDesc "Rename files using text editor"
+        <> Opt.failureCode (setErrorBit 0 exitCodeIndexParseFailure)
+        <> Opt.footerDoc (Just exitCodeExplaination)
+        )
     where
         optionParser' = Rename <$> renameOptionParser
+        bitAtIndex (Index index) str = PP.text $ show index ++ ": " ++ str
+        paragraph sentences =
+            foldr
+                (\word acc -> PP.text word PP.</> acc)
+                PP.empty
+                (words $ unwords sentences)
+        exitCodeExplaination =
+            let bitInfo = PP.vsep
+                    [ paragraph [ "Bit at a given index and the error it represents:"
+                                , "(index starts from 0, but the 0-th bit are never set)"
+                                ]
+                    , bitAtIndex exitCodeIndexParseFailure "Cannot parse command line arguments"
+                    , bitAtIndex (toIndex $ HasErrorFiles "") "Some files cannot be renamed"
+                    , bitAtIndex (toIndex $ HasSuccessFiles "") "Some files are renamed"
+                    , bitAtIndex (toIndex $ HasActiveStop "") "Renaming is aborted due to some errors"
+                    ]
+                okCase = paragraph ["This program exits with exit code 0 if everything goes well."]
+                errorCase = paragraph
+                    [ "If there are errors, then the error messages are printed to stderr,"
+                    , "and bit fields in the error code are used to indicate errors:"
+                    , "if a bit at a given index is set,"
+                    , "then the error corresponding to that bit has happened."
+                    ]
+                in PP.vsep $ List.intersperse PP.empty [okCase, errorCase, bitInfo]
 
 
 newtype Option
