@@ -338,7 +338,7 @@ exitCodeExplaination =
         , "then the error corresponding to that bit has happened."]
     bitInfo = PP.vsep
         [ paragraph [ "Bit at a given index and the error it represents:"
-                    , "(index starts from 0, but the 0-th bit are never set)"]
+                    , "(index starts from 0, but the zeroth bit is never set)"]
         , bitAtIndex exitCodeIndexParseFailure "Cannot parse command line arguments"
         , bitAtIndex (toIndex $ HasErrorFiles "") "Some files cannot be renamed"
         , bitAtIndex (toIndex $ HasSuccessFiles "") "Some files are renamed"
