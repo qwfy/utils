@@ -214,14 +214,14 @@ checkMissingDir' dirNames =
         in Just $ unlines (header : indented)
 
 waitPairs :: String -> [String]
-          -> [FilePath] -> Bool
+          -> [FilePath] -> SortMethod
           -> FilePath -> System.IO.Handle
           -> IO (Either Reason Pairs)
 waitPairs editor editorOptions
-          fileNames isSort
+          fileNames sortMethod
           tempFile tempHandle = do
   -- write file names to the temp file
-  let fileNamesStr = unlines $ sort isSort fileNames
+  fileNamesStr <- unlines <$> sort sortMethod fileNames
   System.IO.hPutStr tempHandle fileNamesStr
   System.IO.hPutStr tempHandle $ unlines ["", delimiter, ""]
   System.IO.hPutStr tempHandle fileNamesStr
@@ -237,10 +237,19 @@ waitPairs editor editorOptions
                "Editor terminated with a non-zero exit code: " ++ show exitCode
          in return $ Left msg
     else fileToPairs tempHandle
+
+
+sort :: SortMethod -> [String] -> IO [String]
+sort NoSort xs = return xs
+sort NaturalSort xs = return $ List.sortBy NaturalSort.compare xs
+sort DepthFirstSort xs = do
+  absolutes <- sequence $ map System.Directory.makeAbsolute xs
+  let sorted = reverse $ List.sortBy cmp absolutes
+  sequence $ map System.Directory.makeRelativeToCurrentDirectory sorted
   where
-    sort :: Bool -> [String] -> [String]
-    sort False xs = xs
-    sort True xs = List.sortBy NaturalSort.compare xs
+    cmp :: FilePath -> FilePath -> Ordering
+    cmp a b =
+      compare (length . System.FilePath.splitPath $ a) (length . System.FilePath.splitPath $ b)
 
 fileToPairs :: System.IO.Handle -> IO (Either Reason Pairs)
 fileToPairs handle = do
@@ -323,7 +332,7 @@ optionParser =
     <> Opt.failureCode (setErrorBit 0 exitCodeIndexParseFailure)
     <> Opt.footerDoc (Just exitCodeExplaination))
   where
-    versionParser = Version.parser "0.5.0" $(Git.gitHash) $(Git.gitDirty)
+    versionParser = Version.parser "0.6.0" $(Git.gitHash) $(Git.gitDirty)
     optionParser' = Rename <$> renameOptionParser
 
 exitCodeExplaination =
@@ -367,11 +376,22 @@ instance Show MissingDir where
   show Create = "create"
   show Abort = "abort"
 
+
+data SortMethod
+  = NoSort
+  | NaturalSort
+  | DepthFirstSort
+
+instance Show SortMethod where
+  show NoSort = "no-sort"
+  show NaturalSort = "natural"
+  show DepthFirstSort = "depth-first"
+
 data RenameOption = RenameOption
   { renameOptionSource        :: Source
   , renameOptionEditor        :: Maybe String
   , renameOptionEditorOptions :: [String]
-  , renameOptionSort          :: Bool
+  , renameOptionSort          :: SortMethod
   , renameOptionMissingDir    :: MissingDir
   , renameOptionStopOnError   :: Bool
   }
@@ -410,9 +430,13 @@ renameOptionParser = do
                   \special characters are NOT taken care of"))
 
   renameOptionSort <-
-    fmap not (Opt.switch
-      (  Opt.long "no-sort"
-      <> Opt.help "Don't sort files when putting them to editor"))
+    Opt.option parseSortMethod
+      (  Opt.long "sort-method"
+      <> Opt.metavar "SORT_METHOD"
+      <> Opt.value NaturalSort
+      <> Opt.showDefault
+      <> Opt.help "Files will be sorted according to this method when they are putting to the editor. \
+                  \SORT_METHOD is one of no-sort, natural, depth-first")
 
   renameOptionMissingDir <-
     Opt.option parseMissingDir
@@ -445,3 +469,13 @@ parseMissingDir =
       | action == "create" = Right Create
       | action == "abort" = Right Abort
       | otherwise = Left $ "Unrecognized action \"" ++ action ++ "\""
+
+parseSortMethod :: Opt.ReadM SortMethod
+parseSortMethod =
+  Opt.eitherReader rd
+  where
+    rd method
+      | method == "no-sort" = Right NoSort
+      | method == "natural" = Right NaturalSort
+      | method == "depth-first" = Right DepthFirstSort
+      | otherwise = Left $ "Unrecognized sort method \"" ++ method ++ "\""
